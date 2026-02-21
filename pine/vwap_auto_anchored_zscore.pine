@@ -1,0 +1,74 @@
+//@version=6
+indicator("VWAP Auto Anchored Z-Score (Minimal)", overlay=true, max_bars_back=5000)
+
+leftBars = input.int(5, "Pivot Left Bars", minval=1)
+rightBars = input.int(5, "Pivot Right Bars", minval=1)
+anchorMode = input.string("Both", "Auto Anchor Mode", options=["High", "Low", "Both"])
+zThreshold = input.float(2.0, "Z-Score Threshold", minval=0.1)
+
+enableSmoothing = input.bool(false, "Optional: Smooth Z-Score")
+smoothLength = input.int(5, "Optional: Smoothing Length", minval=1)
+showThresholdBands = input.bool(false, "Optional: Show Z Threshold Bands")
+
+ph = ta.pivothigh(high, leftBars, rightBars)
+pl = ta.pivotlow(low, leftBars, rightBars)
+
+var int anchorIndex = 0
+
+newHighPivotBar = na(ph) ? na : bar_index - rightBars
+newLowPivotBar = na(pl) ? na : bar_index - rightBars
+
+if anchorMode == "High"
+    if not na(newHighPivotBar)
+        anchorIndex := int(newHighPivotBar)
+else if anchorMode == "Low"
+    if not na(newLowPivotBar)
+        anchorIndex := int(newLowPivotBar)
+else
+    latestCandidate = anchorIndex
+    if not na(newHighPivotBar)
+        latestCandidate := int(math.max(latestCandidate, newHighPivotBar))
+    if not na(newLowPivotBar)
+        latestCandidate := int(math.max(latestCandidate, newLowPivotBar))
+    anchorIndex := latestCandidate
+
+var float wSum = na
+var float wxSum = na
+var float wx2Sum = na
+
+isNewAnchor = anchorIndex != nz(anchorIndex[1], anchorIndex)
+
+if bar_index < anchorIndex
+    wSum := na
+    wxSum := na
+    wx2Sum := na
+else
+    tp = (high + low + close) / 3.0
+    w = math.max(volume, 0.0)
+
+    if na(wSum) or isNewAnchor
+        wSum := w
+        wxSum := w * tp
+        wx2Sum := w * tp * tp
+    else
+        wSum += w
+        wxSum += w * tp
+        wx2Sum += w * tp * tp
+
+vwapAnchored = wxSum / math.max(wSum, 1e-12)
+variance = wx2Sum / math.max(wSum, 1e-12) - vwapAnchored * vwapAnchored
+stdDev = math.sqrt(math.max(variance, 0.0))
+zRaw = (close - vwapAnchored) / math.max(stdDev, 1e-12)
+zScore = enableSmoothing ? ta.ema(zRaw, smoothLength) : zRaw
+
+plot(vwapAnchored, "Anchored VWAP", color=color.orange, linewidth=2)
+plotshape(bar_index == anchorIndex, title="Anchor", style=shape.triangleup, location=location.belowbar, color=color.yellow, size=size.tiny)
+
+zColor = zScore > zThreshold ? color.red : zScore < -zThreshold ? color.lime : color.silver
+plot(zScore, "Z-Score", color=zColor, linewidth=2, display=display.pane)
+
+upperBand = showThresholdBands ? zThreshold : na
+lowerBand = showThresholdBands ? -zThreshold : na
+plot(upperBand, "Upper Threshold", color=color.new(color.red, 35), display=display.pane)
+plot(lowerBand, "Lower Threshold", color=color.new(color.green, 35), display=display.pane)
+plot(0, "Zero", color=color.new(color.gray, 60), display=display.pane)
