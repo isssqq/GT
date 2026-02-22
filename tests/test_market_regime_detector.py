@@ -116,7 +116,7 @@ class TestComputeAutocorr1(unittest.TestCase):
         self.assertTrue(np.all(valid <= 1.0 + 1e-9))
 
     def test_trending_has_positive_autocorr(self):
-        """Verify autocorr produces finite, bounded values and non-trivial spread."""
+        """Verify autocorr produces finite, bounded values for a trending series."""
         _, _, c = _make_trend(500, drift=0.005)
         ac = compute_autocorr1(c, window=30)
         valid = ac[~np.isnan(ac)]
@@ -125,6 +125,8 @@ class TestComputeAutocorr1(unittest.TestCase):
         # Values must be in Pearson correlation range
         self.assertTrue(np.all(valid >= -1.0 - 1e-9))
         self.assertTrue(np.all(valid <= 1.0 + 1e-9))
+        # There should be non-trivial variation (not all identical)
+        self.assertGreater(float(np.std(valid)), 0.0)
 
 
 # ── EMA slope tests ───────────────────────────────────────────────────────────

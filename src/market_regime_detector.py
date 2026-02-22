@@ -137,7 +137,8 @@ def compute_choppiness(
     close: np.ndarray,
     period: int = 14,
 ) -> np.ndarray:
-    """Choppiness Index ∈ [0, 100]. Low (<38.2) → trending, high (>61.8) → ranging."""
+    """Choppiness Index. Theoretically ∈ [0, 100/(log10(period)/log10(2))].
+    Typically reported in [0, 100]. Low (<38.2) → trending, high (>61.8) → ranging."""
     from numpy.lib.stride_tricks import sliding_window_view
 
     tr = _true_range(high, low, close)
