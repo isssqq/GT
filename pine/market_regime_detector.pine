@@ -1,0 +1,93 @@
+//@version=6
+// Market Regime Detector – trending vs ranging classification
+// Indicators: ADX/DI, Choppiness Index, EMA slope, lag-1 autocorrelation (optional)
+// Score ∈ [-1,1]: positive → TREND UP, negative → TREND DOWN, ~0 → RANGING
+// All optional features are OFF by default.
+indicator("Market Regime Detector", overlay=false, max_bars_back=500)
+
+// ── Inputs ────────────────────────────────────────────────────────────────────
+adxLen       = input.int(14,   "ADX / DI Length",        minval=1)
+chopLen      = input.int(14,   "Choppiness Length",      minval=2)
+emaFast      = input.int(20,   "EMA Fast Length",        minval=1)
+emaSlow      = input.int(50,   "EMA Slow Length",        minval=1)
+scoreThresh  = input.float(0.22, "Score Threshold",      minval=0.01, maxval=1.0, step=0.01)
+
+// Optional: lag-1 autocorrelation component (Hurst proxy)
+useAutocorr    = input.bool(false, "Optional: Autocorr Component")
+autocorrLen    = input.int(50,    "Optional: Autocorr Window", minval=10)
+
+// Optional: Bollinger Band width percentile component
+useBBWidth     = input.bool(false, "Optional: BB Width Component")
+bbLen          = input.int(20,    "Optional: BB Length",       minval=2)
+bbPctLen       = input.int(100,   "Optional: BB Pct Window",   minval=10)
+
+// ── ADX / DI ──────────────────────────────────────────────────────────────────
+[diPlus, diMinus, adxVal] = ta.dmi(adxLen, adxLen)
+
+// ADX strength: map [15, 50] → [0, 1]
+adxStrength = math.max((adxVal - 15.0) / 35.0, 0.0)
+adxStrength := math.min(adxStrength, 1.0)
+
+// ── Choppiness Index ──────────────────────────────────────────────────────────
+chopTrSum  = math.sum(ta.tr(true), chopLen)
+chopHH     = ta.highest(high, chopLen)
+chopLL     = ta.lowest(low,  chopLen)
+chopDenom  = chopHH - chopLL
+chopIndex  = chopDenom > 1e-12 ? 100.0 * math.log10(math.max(chopTrSum / chopDenom, 1e-12)) / math.log10(chopLen) : 50.0
+// Strength: map [61.8, 38.2] → [0, 1]  (low chop = trending)
+chopStrength = math.max((61.8 - chopIndex) / 23.6, 0.0)
+chopStrength := math.min(chopStrength, 1.0)
+
+// ── EMA slope ─────────────────────────────────────────────────────────────────
+fastEma    = ta.ema(close, emaFast)
+slowEma    = ta.ema(close, emaSlow)
+emaRatio   = slowEma > 1e-12 ? (fastEma - slowEma) / slowEma : 0.0
+
+// ── Optional: lag-1 autocorrelation ──────────────────────────────────────────
+logR       = math.log(math.max(close / nz(close[1], close), 1e-12))
+autocorrVal = useAutocorr ? ta.correlation(logR, logR[1], autocorrLen) : 0.0
+autocorrStrength = useAutocorr ? math.min(math.abs(autocorrVal) * 2.0, 1.0) : 0.0
+
+// ── Optional: BB width percentile ────────────────────────────────────────────
+[bbBasis, bbUpper, bbLower] = ta.bb(close, bbLen, 2.0)
+bbWidth      = bbBasis > 1e-12 ? (bbUpper - bbLower) / bbBasis : 0.0
+bbWidthAvg   = ta.sma(bbWidth, bbPctLen)
+bbStrength   = useBBWidth and bbWidthAvg > 1e-12 ? math.min(bbWidth / bbWidthAvg, 2.0) / 2.0 : 0.0
+
+// ── Combine strength ──────────────────────────────────────────────────────────
+// Core: min(ADX, Choppiness) – both must agree (AND gate)
+// Bonus: optional secondary indicators
+coreStrength = math.min(adxStrength, chopStrength)
+bonusStrength = 0.15 * autocorrStrength + 0.15 * bbStrength
+strength      = math.min(0.70 * coreStrength + bonusStrength, 1.0)
+
+// ── Direction ─────────────────────────────────────────────────────────────────
+diSpreadAbs = math.abs(diPlus - diMinus)
+diDir       = diSpreadAbs > 1e-12 ? math.sign(diPlus - diMinus) : 0.0
+emaDir      = math.sign(emaRatio)
+// 60% DI, 40% EMA
+direction   = 0.6 * diDir + 0.4 * emaDir
+direction  := direction > 0 ? 1.0 : direction < 0 ? -1.0 : 0.0
+
+// ── Choppiness gate: suppress score when CI says clearly ranging ──────────────
+// CI > 55 → gate = 0.25 (strong suppression); CI < 45 → gate = 1.0
+chopGate = math.max(math.min((55.0 - chopIndex) / 10.0, 1.0), 0.25)
+
+// ── Final score ───────────────────────────────────────────────────────────────
+score = math.max(math.min(strength * direction * chopGate, 1.0), -1.0)
+
+// ── Regime classification ─────────────────────────────────────────────────────
+// 1 = TREND UP, -1 = TREND DOWN, 0 = RANGING
+regimeVal = score > scoreThresh ? 1 : score < -scoreThresh ? -1 : 0
+
+// ── Plots ─────────────────────────────────────────────────────────────────────
+scoreColor = regimeVal == 1 ? color.new(color.lime, 0) : regimeVal == -1 ? color.new(color.red, 0) : color.new(color.gray, 40)
+
+plot(score, "Score", color=scoreColor, linewidth=2)
+hline(scoreThresh,  "Upper Threshold", color=color.new(color.lime, 60), linestyle=hline.style_dashed)
+hline(-scoreThresh, "Lower Threshold", color=color.new(color.red,  60), linestyle=hline.style_dashed)
+hline(0,            "Zero",            color=color.new(color.gray, 70), linestyle=hline.style_dotted)
+
+// Background colour on main chart (overlay=false, so we use bgcolor on this pane)
+bgColor = regimeVal == 1 ? color.new(color.lime, 90) : regimeVal == -1 ? color.new(color.red, 90) : color.new(color.gray, 95)
+bgcolor(bgColor, title="Regime Background")
